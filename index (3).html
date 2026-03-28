@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ZType Clone with Settings</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap" rel="stylesheet">
+<style>
+  html, body {
+    margin: 0; padding: 0; overflow: hidden; height: 100%;
+    background: black; font-family: 'Orbitron', sans-serif;
+    color: white;
+  }
+  canvas#bgCanvas {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%; z-index: 0;
+  }
+.neon-text{
+color:white;
+text-shadow: 0 0 5px #ffffff,0 0 10px #ffffff,0 0 20px #ffffff;
+}
+  .screen {
+    position: absolute; width: 100%; height: 100%;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: none ;
+    color: white; z-index: 2;
+    opacity: 0; transform: scale(0.9) translateY(30px);
+    transition: opacity 0.8s ease, transform 0.8s ease;
+    pointer-events: none;
+  }
+  .screen.active {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    pointer-events: all;
+  }
+  #play-screen {
+  background: none !important;
+}
+  #title { font-size: 70px; margin-bottom: 20px; }
+
+  .menu-item {
+    color: #ff9900; font-size: 24px; cursor: pointer;
+    margin: 10px;
+    transition: transform 0.3s;
+  }
+  .menu-item:hover { transform: scale(1.2); }
+
+  #game { position: absolute; width: 100%; height: 100%; z-index: 1; display: none; }
+
+  #hud {
+    position: absolute; top: 10px; left: 50%;
+    transform: translateX(-50%); color: white;
+    font-size: 18px; display: flex; gap: 30px;
+    background: rgba(0,0,0,0.3);
+    padding: 8px 20px; border-radius: 8px;
+  }
+
+  #countdown {
+    font-size: 100px;
+    color: #ff9900;
+    animation: glow 1s ease-in-out;
+  }
+
+  @keyframes glow {
+    0% { transform: scale(0.5); opacity: 0; }
+    50% { transform: scale(1.3); opacity: 1; }
+    100% { transform: scale(1); opacity: 0; }
+  }
+
+  #volume-display { font-size: 24px; margin: 20px; }
+  input[type=range] {
+    width: 200px;
+  }
+</style>
+</head>
+<body>
+<canvas id="bgCanvas"></canvas>
+
+<!-- Start Screen -->
+<div id="start-screen" class="screen active neon-text">
+  <div id="title">TYPE BLASTER</div>
+  <div class="menu-item" id="start-button">Start Game</div>
+  <div class="menu-item" id="settings-button">Settings</div>
+</div>
+
+<!-- Settings Screen -->
+<div id="settings-screen" class="screen neon-text">
+  <div id="title">SETTINGS</div>
+  <div id="volume-display">Volume: 100%</div>
+  <input type="range" id="volume-slider" min="0" max="100" value="100">
+  <div class="menu-item" id="back-button">Back</div>
+</div>
+
+<!-- Countdown / Play Screen -->
+<div id="play-screen" class="screen">
+  <div id="countdown"></div>
+</div>
+
+<!-- Game Area -->
+<div id="game">
+  <canvas id="canvas"></canvas>
+  <div id="hud">
+    <span id="score">Score: 0</span>
+    <span id="lives">Lives: 3</span>
+    <span id="level">Level: 1</span>
+  </div>
+</div>
+
+<!-- Game Over Screen -->
+<div id="game-over-screen" class="screen">
+  <div id="title">GAME OVER</div>
+  <div class="menu-item" id="restart-button">Restart</div>
+</div>
+
+<audio id="shootSound" src="shootsound.mp3"></audio>
+<audio id="explosionSound" src="explosion.mp3"></audio>
+<audio id="bgMusic" src="bgmusic.mp3" loop></audio>
+
+<script>
+const bgCanvas = document.getElementById("bgCanvas");
+const bgCtx = bgCanvas.getContext("2d");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+function resizeCanvas() {
+  bgCanvas.width = window.innerWidth;
+  bgCanvas.height = window.innerHeight;
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+// Starfield background (runs for all screens)
+let stars = [];
+for (let i = 0; i < 200; i++) {
+  stars.push({
+    x: Math.random() * bgCanvas.width,
+    y: Math.random() * bgCanvas.height,
+    r: Math.random(),
+    speed: Math.random() * 0.5 + 0.2
+  });
+}
+function animateStars() {
+  bgCtx.fillStyle = "#000";
+  bgCtx.fillRect(0, 0, bgCanvas.width, bgCanvas.height);
+  for (let s of stars) {
+    bgCtx.fillStyle = "#fff";
+    bgCtx.beginPath();
+    bgCtx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    bgCtx.fill();
+    s.y += s.speed;
+    if (s.y > bgCanvas.height) {
+      s.y = 0; s.x = Math.random() * bgCanvas.width;
+    }
+  }
+  requestAnimationFrame(animateStars);
+}
+animateStars();
+
+// DOM Elements
+const startScreen = document.getElementById("start-screen");
+const settingsScreen = document.getElementById("settings-screen");
+const gameScreen = document.getElementById("game");
+const playScreen = document.getElementById("play-screen");
+const gameOverScreen = document.getElementById("game-over-screen");
+const scoreEl = document.getElementById("score");
+const livesEl = document.getElementById("lives");
+const levelEl = document.getElementById("level");
+const shootSound = document.getElementById("shootSound");
+const explosionSound = document.getElementById("explosionSound");
+const bgMusic = document.getElementById("bgMusic");
+const countdownEl = document.getElementById("countdown");
+const volumeDisplay = document.getElementById("volume-display");
+const volumeSlider = document.getElementById("volume-slider");
+
+let words = [];
+let bullets = [];
+let particles = [];
+let score = 0;
+let lives = 3;
+let level = 1;
+let destroyed = 0;
+let spawnTimer = null;
+
+let currentTargetWord = null;
+let wordInputMap = new Map(); // word → number of typed letters
+
+let volume = 1; // 100%
+function updateVolumeDisplay() {
+  volumeDisplay.textContent = "Volume: " + Math.round(volume * 100) + "%";
+  [shootSound, explosionSound, bgMusic].forEach(a => a.volume = volume);
+}
+updateVolumeDisplay();
+
+volumeSlider.addEventListener("input", () => {
+  volume = volumeSlider.value / 100;
+  updateVolumeDisplay();
+});
+
+const spaceship = { x: canvas.width / 2, y: canvas.height - 60 };
+let targetX = spaceship.x;
+const wordList = [
+  "star","moon","sun","planet","space","rocket","comet","orbit","asteroid","galaxy",
+  "nova","cloud","sky","light","ring","ship","earth","mars","venus","jupiter",
+  "saturn","pluto","sunset","sunrise","night","day","shine","dust","spacecraft","moonlight",
+  "lunar","solar","skyline","mission","crew","alien","astronaut","spaceship","capsule","probe",
+  "launch","engine","thruster","base","station","rover","crater","meteor","impact","track",
+  "path","signal","beacon","skyway","fly","zoom","blast","float","glow","speed",
+  "trip","journey","explore","travel","shipyard","skyship","pilot","captain","crewship","starlight",
+  "home","safe","return","land","takeoff","flight","ground","view","above","below"
+];
+
+window.addEventListener("mousemove", e => targetX = e.clientX);
+
+// Particle effects
+function createParticles(x,y) {
+  for (let i = 0; i < 20; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 4,
+      vy: (Math.random() - 0.5) * 4,
+      life: 30
+    });
+  }
+}
+function updateParticles() {
+  for (let p of particles) { p.x+=p.vx; p.y+=p.vy; p.life--; }
+  particles = particles.filter(p=>p.life>0);
+}
+function drawParticles() {
+  for (let p of particles) {
+    ctx.fillStyle=`rgba(255,255,255,${p.life/30})`;
+    ctx.fillRect(p.x,p.y,2,2);
+  }
+}
+
+// Words
+function spawnWord() {
+  const text = wordList[Math.floor(Math.random()*wordList.length)];
+  words.push({ text, x: Math.random()*(canvas.width-200)+100, y: 0 });
+}
+function drawWords() {
+  ctx.font = "20px Orbitron";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "white";
+  for (let w of words) ctx.fillText(w.text, w.x, w.y);
+}
+
+// Bullets
+function drawBullets() {
+  ctx.fillStyle = "#cc5500";
+  for (let b of bullets) ctx.fillRect(b.x-1,b.y-10,4,10);
+}
+
+// Spaceship
+const shipImg = new Image();
+shipImg.src = 'spaceship.png'; // adjust path if needed
+
+function drawSpaceship() {
+  const width = 55;
+  const height = 55;
+  ctx.drawImage(shipImg, spaceship.x - width / 2, spaceship.y, width, height);
+}
+
+// Game loop
+function updateGame() {
+  resizeCanvas();
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  spaceship.x += (targetX - spaceship.x) * 0.08;
+
+  // Move words & check for missed ones safely
+  let missedWords = [];
+  for (let w of words) {
+    w.y += 0.3 + level * 0.05; // Speed scales faster with level
+    if (w.y > canvas.height - 50) {
+      missedWords.push(w);
+    }
+  }
+
+  if (missedWords.length > 0) {
+    // Remove missed words
+    words = words.filter(w => !missedWords.includes(w));
+
+    // Reduce lives only once per frame for each missed word
+    lives -= missedWords.length;
+    livesEl.textContent = "Lives: " + lives;
+
+    if (lives <= 0) { endGame(); return; }
+  }
+
+  // Bullets
+  for (let b of bullets) {
+    const tx = b.word.x;
+    const ty = b.word.y;
+    const dx = tx - b.x;
+    const dy = ty - b.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist < 8) {
+      const typedCount = wordInputMap.get(b.word) || 0;
+      if (typedCount > 0) {
+        b.word.text = b.word.text.slice(1);
+        wordInputMap.set(b.word, typedCount - 1);
+
+        if (b.word.text.length === 0) {
+    explosionSound.play();
+    createParticles(tx, ty);
+
+    // REMOVE the word from active list immediately
+    words = words.filter(w => w !== b.word);
+
+    wordInputMap.delete(b.word);
+    score += 10;
+    destroyed++;
+    scoreEl.textContent = "Score: " + score;
+
+   // Level up every 50 points
+let newLevel = Math.floor(score / 70) + 1;
+if (newLevel > level) {
+    level = newLevel;
+    levelEl.textContent = "Level: " + level;
+
+    // Speed up spawns more aggressively
+    clearInterval(spawnTimer);
+    let spawnRate = Math.max(800, 2500 - level * 100); 
+    spawnTimer = setInterval(spawnWord, spawnRate);
+}
+}
+      }
+      bullets = bullets.filter(bb => bb !== b);
+    } else {
+      b.x += (dx / dist) * 14;
+      b.y += (dy / dist) * 14;
+    }
+  }
+
+  updateParticles();
+  drawWords();
+  drawBullets();
+  drawParticles();
+  drawSpaceship();
+
+  requestAnimationFrame(updateGame);
+}
+// Keyboard: fire bullet for each correct letter typed
+window.addEventListener("keydown", e => {
+  const letter = e.key.toLowerCase();
+  if (!/^[a-z]$/.test(letter)) return;
+
+  // Find a word where the next needed letter matches
+  const matchingWord = words.find(w => {
+    const typed = wordInputMap.get(w) || 0;
+    return w.text[typed]?.toLowerCase() === letter;
+  });
+
+  if (matchingWord) {
+    shootSound.pause();
+    shootSound.currentTime = 0;
+    shootSound.play();
+
+    // Register one more correct letter typed
+    wordInputMap.set(matchingWord, (wordInputMap.get(matchingWord) || 0) + 1);
+
+    // Fire bullet toward that word
+    bullets.push({
+      x: spaceship.x,
+      y: spaceship.y,
+      word: matchingWord
+    });
+  }
+});
+
+// Screen transition helper
+function showScreen(screen) {
+  [startScreen, settingsScreen, playScreen, gameOverScreen].forEach(s => s.classList.remove("active"));
+  if (screen) screen.classList.add("active");
+}
+
+// Game state
+function startGame() {
+  clearInterval(spawnTimer);
+  gameOverScreen.classList.remove("active");
+  gameScreen.style.display = "block";
+
+  bgMusic.currentTime = 0;
+  bgMusic.play();
+
+  score = 0; lives = 3; level = 1; destroyed = 0;
+  scoreEl.textContent = "Score: 0";
+  livesEl.textContent = "Lives: 3";
+  levelEl.textContent = "Level: 1";
+  words = []; bullets = []; particles = [];
+  spaceship.x = canvas.width/2; 
+  targetX = spaceship.x;
+
+  spawnTimer = setInterval(spawnWord, 3000);
+  updateGame();
+}
+
+function showPlayScreen() {
+  showScreen(playScreen);
+  let countdown = 3;
+
+  function nextCount() {
+    if (countdown > 0) {
+      countdownEl.textContent = countdown;
+      countdownEl.style.animation = "none";
+      countdownEl.offsetHeight;
+      countdownEl.style.animation = "glow 1s ease-in-out";
+      countdown--;
+      setTimeout(nextCount, 1000);
+    } else {
+      countdownEl.textContent = "GO!";
+      countdownEl.style.animation = "none";
+      countdownEl.offsetHeight;
+      countdownEl.style.animation = "glow 1s ease-in-out";
+      setTimeout(() => {
+        playScreen.classList.remove("active");
+        startGame();
+      }, 1000);
+    }
+  }
+  nextCount();
+}
+
+function endGame() {
+  clearInterval(spawnTimer);
+  gameScreen.style.display = "none";
+  showScreen(gameOverScreen);
+  bgMusic.pause();
+}
+
+// Buttons
+document.getElementById("start-button").onclick = () => { showPlayScreen(); };
+document.getElementById("restart-button").onclick = () => { showPlayScreen(); };
+document.getElementById("settings-button").onclick = () => { showScreen(settingsScreen); };
+document.getElementById("back-button").onclick = () => { showScreen(startScreen); };
+</script>
+</body>
+</html>
